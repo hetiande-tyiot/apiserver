@@ -1,0 +1,7 @@
+apienv/
+__pycache__/
+*.pyc
+
+# 每台機器不同，各自維護（71 公司開發 / 34 局內）
+config.py
+apiserver.service
