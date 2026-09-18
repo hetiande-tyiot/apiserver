@@ -50,7 +50,7 @@ async def _tts_async(text: str) -> bytes:
             text=text,
             outfmt="wav",
             language="zh-TW",
-            speaker="AIwoman3_5",
+            speaker="Yain2",
             speed=TTS_SPEED,
             gain=TTS_GAIN,
             token=TTS_TOKEN,
