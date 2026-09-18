@@ -20,14 +20,25 @@ from datetime import datetime
 
 import requests
 
-from config import MACHINEC_URL, MACHINEC_TIMEOUT
+from config import MACHINEC_URL, MACHINEC_TOKEN, MACHINEC_TIMEOUT
 from utils  import _ts
+
+# MC 所有 API 共用的 headers（token 由 config/環境變數 MACHINEC_TOKEN 帶入）
+_HEADERS = {
+    "Authorization": f"Bearer {MACHINEC_TOKEN}",
+    "Content-Type":  "application/json",
+}
 
 _CONV_URL             = f"{MACHINEC_URL}/api/AiRobot/Conversation"
 _ANALYSIS_URL         = f"{MACHINEC_URL}/api/AiRobot/Analysis"
 _TRANSFER_SUGGEST_URL = f"{MACHINEC_URL}/api/AiRobot/TransferSuggest"
 _CAPACITY_URL         = f"{MACHINEC_URL}/api/AiRobot/Capacity"   # 規格待定
 _IDLE_LINE_URL        = f"{MACHINEC_URL}/api/AiRobot/IdleLineCount"
+
+# MC 的 Conversation/Analysis/TransferSuggest 成功時回 200 或 202，且 **body 為空**。
+# 因此不能用 resp.json()["success"] 判斷成功（空 body 解 JSON 會拋 JSONDecodeError，
+# 讓真正的 401/500 被誤報成「例外」），一律改看 HTTP 狀態碼。
+_OK_CODES = (200, 202)
 
 
 # caseDetails 排除清單：這些不放進 caseDetails
@@ -100,9 +111,9 @@ def conversation(call_id: str, speaker: str, text: str) -> None:
     """送單筆對話紀錄給機器C。"""
     payload = {"callId": call_id, "speaker": speaker, "DialogueText": text}
     try:
-        resp = requests.post(_CONV_URL, json=payload, timeout=MACHINEC_TIMEOUT)
-        if not resp.json().get("success"):
-            print(f"⚠️ [MachineC] Conversation 回傳失敗：{resp.text} {_ts()}", flush=True)
+        resp = requests.post(_CONV_URL, json=payload, headers=_HEADERS, timeout=MACHINEC_TIMEOUT)
+        if resp.status_code not in _OK_CODES:
+            print(f"⚠️ [MachineC] Conversation 回傳失敗（HTTP {resp.status_code}）：{resp.text} {_ts()}", flush=True)
     except Exception as e:
         print(f"⚠️ [MachineC] Conversation 例外（{speaker}）：{e} {_ts()}", flush=True)
 
@@ -129,14 +140,13 @@ def analysis(call_id: str, case: dict, state: str) -> None:
         "caseDetails":   case_details_str,
     }
     try:
-        resp = requests.post(_ANALYSIS_URL, json=payload, timeout=MACHINEC_TIMEOUT)
-        data = resp.json()
-        if data.get("success"):
+        resp = requests.post(_ANALYSIS_URL, json=payload, headers=_HEADERS, timeout=MACHINEC_TIMEOUT)
+        if resp.status_code in _OK_CODES:
             n_details = len(details_dict)
             print(f"✅ [MachineC] Analysis({state}) 送出（caseDetails: {n_details} 欄）{_ts()}", flush=True)
         else:
             # 失敗時 dump 出我們送的 payload，方便對照 MC 的錯誤訊息
-            print(f"⚠️ [MachineC] Analysis({state}) 回傳失敗：{resp.text} {_ts()}", flush=True)
+            print(f"⚠️ [MachineC] Analysis({state}) 回傳失敗（HTTP {resp.status_code}）：{resp.text} {_ts()}", flush=True)
             print(f"   送出的 caseDetails：{case_details_str}", flush=True)
     except Exception as e:
         print(f"⚠️ [MachineC] Analysis({state}) 例外：{e} {_ts()}", flush=True)
@@ -157,11 +167,11 @@ def transfer_suggest(call_id: str, reason: str, case: dict | None = None) -> Non
         "timestamp":    datetime.now().isoformat(),
     }
     try:
-        resp = requests.post(_TRANSFER_SUGGEST_URL, json=payload, timeout=MACHINEC_TIMEOUT)
-        if resp.json().get("success"):
+        resp = requests.post(_TRANSFER_SUGGEST_URL, json=payload, headers=_HEADERS, timeout=MACHINEC_TIMEOUT)
+        if resp.status_code in _OK_CODES:
             print(f"💡 [MachineC] TransferSuggest({reason}) 送出 {_ts()}", flush=True)
         else:
-            print(f"⚠️ [MachineC] TransferSuggest 回傳失敗：{resp.text} {_ts()}", flush=True)
+            print(f"⚠️ [MachineC] TransferSuggest 回傳失敗（HTTP {resp.status_code}）：{resp.text} {_ts()}", flush=True)
     except Exception as e:
         print(f"⚠️ [MachineC] TransferSuggest 例外：{e} {_ts()}", flush=True)
 
@@ -181,16 +191,16 @@ def check_capacity(call_uuid: str = "") -> bool:
     if os.environ.get("FORCE_MC_FULL") == "1":
         print(f"🚫 [MachineC] FORCE_MC_FULL=1，模擬滿線 {_ts()}", flush=True)
         return True
-
+    
     try:
-        resp = requests.get(_IDLE_LINE_URL, timeout=MACHINEC_TIMEOUT)
+        resp = requests.get(_IDLE_LINE_URL, headers=_HEADERS, timeout=MACHINEC_TIMEOUT)
         resp.raise_for_status()
         idle_count = int(resp.json())          # body 是 JSON scalar（純整數）
         if idle_count <= 0:
             print(f"🚫 [MachineC] IdleLineCount={idle_count}，滿線 [{call_uuid[:8]}] {_ts()}", flush=True)
             return True
-        print(f"✅ [MachineC] IdleLineCount={idle_count}，未滿線 [{call_uuid[:8]}] {_ts()}", flush=True)
+        print(f"✅ [MachineC] IdleLineCount={idle_count}，未滿線 [{call_uuid[:8]}] {_ts()}，URL:{_IDLE_LINE_URL}", flush=True)
         return False
     except Exception as e:
-        print(f"⚠️ [MachineC] IdleLineCount 查詢失敗、預設未滿線：{e} {_ts()}", flush=True)
-        return False
+        print(f"⚠️ [MachineC] IdleLineCount 查詢失敗、預設滿線：{e} {_ts()}", flush=True)
+        return True
