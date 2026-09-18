@@ -2,8 +2,8 @@
 sse_consumer.py — 訂閱機器B 的 case 變化 SSE 串流，把更新即時推給機器C。
 （2026-06-XX 從 ai/ami/ 搬到 apiserver/，由 api_server 集中管理）
 
-對應機器B 端點：
-  GET http://192.168.5.204:8100/session/{sop_session_id}/case/stream
+對應機器B 端點（host 跟著 config.SOP_SERVER_URL，各機器不同）：
+  GET {SOP_SERVER_URL}/session/{sop_session_id}/case/stream
 
 事件類型：
   - case_updated  data 為當前完整 case dict（130+ 欄位）
@@ -28,10 +28,10 @@ def _case_summary(case: dict) -> dict:
     """擷取 Analysis 會送給 MC 的所有欄位，作為 dedup 比對的依據。
     包含 4 個基本欄位 + scenario 專屬欄位（非 null 的）。"""
     return {
-        "caseTypeName": case.get("act_sub_class") or "",
-        "caseAddr":     case.get("location") or case.get("location_hint") or "",
-        "caseSummary":  case.get("summary") or case.get("case_summary") or "",
-        "callerPhone":  case.get("caller_phone") or "",
+        "caseTypeName": case.get("sub_category") or case.get("main_category") or "",
+        "caseAddr":     case.get("address") or "",
+        "caseSummary":  case.get("case_summary") or "",
+        "callerPhone":  case.get("caller_contact") or "",
         "caseDetails":  machinec.extract_case_details(case),
     }
 
@@ -81,10 +81,15 @@ def _process_case(call_uuid: str, case: dict, is_final: bool = False) -> None:
             print(f"🏁 [{call_uuid[:8]}] SSE done（介入引發），通話續行不掛斷 {_ts()}", flush=True)
             return
 
-        # 正常 AI 流程結束 → 通知 amidaemon 開始收尾（最後一段 TTS 播完掛斷）
+        if st.should_end:
+            # api_server 在 sop.push 回 done 當下已送過 /end_call，不重複送
+            print(f"🏁 [{call_uuid[:8]}] SSE done（/end_call 已送過），跳過 {_ts()}", flush=True)
+            return
+
+        # 後備路徑：api_server 沒攔到 done 時才由這裡通知 amidaemon 收尾
         st.should_end = True
         print(f"🏁 [{call_uuid[:8]}] SSE done → push /end_call 給 amidaemon {_ts()}", flush=True)
-        _notify_amidaemon_end(call_uuid)
+        notify_amidaemon_end(call_uuid)
         return
 
     summary = _case_summary(case)
@@ -105,9 +110,12 @@ def _process_case(call_uuid: str, case: dict, is_final: bool = False) -> None:
                              daemon=True).start()
 
 
-def _notify_amidaemon_end(call_uuid: str) -> None:
+def notify_amidaemon_end(call_uuid: str) -> None:
     """通知 amidaemon：AI 流程結束、該掛斷此通電話。
-    呼叫 amidaemon 內部控制端點 POST /end_call。失敗只 log，不影響 SSE 流程。"""
+    呼叫 amidaemon 內部控制端點 POST /end_call。失敗只 log，不影響 SSE 流程。
+
+    正常路徑由 api_server._push_end_call_once() 觸發（sop.push 回 done 當下）；
+    本模組的 done event 分支保留為後備。"""
     try:
         resp = requests.post(
             f"{AMIDAEMON_URL}/end_call",

@@ -84,6 +84,27 @@ def _push_final_once(call_uuid: str, case: dict) -> None:
     ).start()
 
 
+def _push_end_call_once(call_uuid: str) -> None:
+    """AI 流程正常結束 → 通知 amidaemon 收尾（播完最後一段 TTS 後掛斷）。每通只送一次。
+
+    為什麼在這裡送、而不是等 SSE 的 done event：
+      機器B 2026-08-28 起把 SSE 的收線條件改成「收到 /hangup」（為了讓轉真人後
+      能續聽）。而我們的 /hangup 只在 /call/end 呼叫、/call/end 又要等電話掛斷，
+      若仍等 SSE done 才通知 amidaemon 掛斷，就會四方互等形成死結。
+      sop.push() 的回傳值本來就有 done，直接用它觸發即可，不必繞 SSE。
+    """
+    st = mc_state.get(call_uuid)
+    if not st or st.should_end:
+        return
+    st.should_end = True
+    print(f"🏁 [{call_uuid[:8]}] NLP done → push /end_call 給 amidaemon", flush=True)
+    threading.Thread(
+        target=sse_consumer.notify_amidaemon_end,
+        args=(call_uuid,),
+        daemon=True,
+    ).start()
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 通話開始：建 cases、開 110LLM session、合成開場白 TTS、啟動 SSE consumer
 # ═══════════════════════════════════════════════════════════════════════════
@@ -92,7 +113,7 @@ def call_precheck(payload: PrecheckPayload):
     """通話進 AI 前的 pre-check：查 MC 是否滿線。
 
     amidaemon 在 STT_CALL_START 事件時呼叫。滿線時 amidaemon 會把 caller
-    導向 [ivr-ai-full] 掛斷、不進 /call/start，避免浪費 110LLM/TTS/SSE 資源。
+    導向 [ivr-ai-full] 掛斷、不進 /call/start，避免浪費 119LLM/TTS/SSE 資源。
     """
     uuid = payload.uuid
     is_full = machinec.check_capacity(uuid)
@@ -214,6 +235,11 @@ def call_stt(payload: SttPayload):
         # NLP 判定建議轉接 → 通知 MC（每通電話最多送一次）
         if transfer:
             _push_transfer_suggest_once(uuid, "out_of_scope", case or {})
+        elif done:
+            # AI 流程正常跑完（非轉真人）→ 通知 amidaemon 播完 TTS 後收尾掛斷。
+            # 不能等 SSE 的 done event：B 端已改成收到 /hangup 才推 done，而 /hangup
+            # 只在 /call/end 呼叫，等下去會互等成死結（詳見 _push_end_call_once）。
+            _push_end_call_once(uuid)
 
     return {
         "uuid":       uuid,
@@ -227,7 +253,7 @@ def call_stt(payload: SttPayload):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 通話結束：110LLM hangup、取最終 case、推 MC Final、收 SSE
+# 通話結束：119LLM hangup、取最終 case、推 MC Final、收 SSE
 # ═══════════════════════════════════════════════════════════════════════════
 @app.post("/call/end")
 def call_end(payload: CallEndPayload):
@@ -264,8 +290,11 @@ def ai_robot_transfer(payload: TransferPayload):
 
     處理順序：
       1. 標記 mc_state.intervened = True（sse_consumer 收 done event 時不會誤觸發掛斷）
-      2. sop.hangup() 通知 110LLM 結束 session（讓後續 /observe 可用，否則會 409 Conflict）
-      3. Forward 給 amidaemon 執行實際的 AMI Redirect → Dial 分機
+      2. Forward 給 amidaemon 執行實際的 AMI Redirect → Dial 分機
+
+    ⚠️ 這裡**不可以**呼叫 sop.hangup()。B 端 SSE 的收線條件是「收到 hangup」，
+       提早呼叫會關掉 SSE，轉真人後的摘要就再也推不過來（2026-08-28 B 端已放寬
+       /observe 不需 done=true，原本的 hangup 繞道已無必要）。
     """
     uuid = payload.callId
     print(f"📥 [Transfer/{payload.reason}] {uuid[:8]} → PJSIP/{payload.agentExtension}",
@@ -276,13 +305,7 @@ def ai_robot_transfer(payload: TransferPayload):
     if st:
         st.intervened = True
 
-    # 2. 提前 hangup 110LLM session，解鎖 /observe（B 端規格要求 done=true 才能 observe）
-    sop_id = sop_sessions.get(uuid, "")
-    if sop_id:
-        sop.hangup(sop_id)
-        print(f"📤 [{uuid[:8]}] 通知 110LLM hangup（介入觸發、解鎖後續 /observe）", flush=True)
-
-    # 3. Forward 給 amidaemon
+    # 2. Forward 給 amidaemon（不 hangup，理由見 docstring）
     try:
         resp = requests.post(
             f"{AMIDAEMON_URL}/transfer",

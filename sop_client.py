@@ -4,12 +4,13 @@ sop_client.py — 119 NLP Server（機器B, 192.168.5.132:8200）HTTP 呼叫封�
 端點（以 2026-07-15 實測 /openapi.json 為準）：
   POST /session/new              建立新 session（回傳 session_id + 開場白）
   POST /session/{id}/input       推送 caller 語句（同步 blocking，回 AI 回覆 + done）
-  POST /session/{id}/hangup      session 收尾
+  POST /session/{id}/observe     轉真人後餵對話（只更新摘要、不回話）  ← B 於 2026-08-28 補上
+  POST /session/{id}/hangup      session 收尾（B 收到才推 SSE done 並關連線）
   GET  /session/{id}/result      取案件 JSON（done=False 時只回 {"done": false}，不含 case）
+  GET  /session/{id}/case/stream 案件變動 SSE（見 sse_consumer.py）
 
-119 沒有、但 110 有的端點（勿再呼叫）：
-  POST /session/{id}/observe     → 119 未提供，observe() 已改為 no-op
-  GET  /session/{id}/case/stream → 119 無 SSE（sse_consumer 待移除）
+⚠️ 除了 /call/end，任何地方都不可呼叫 hangup。
+   B 端 SSE 的收線條件是「收到 hangup」，提早呼叫會讓轉真人後的續聽失效。
 """
 import requests
 
@@ -49,15 +50,28 @@ def push(sop_session_id: str, text: str) -> tuple[list[str], bool, str | None]:
 
 
 def observe(sop_session_id: str, text: str, role: str) -> dict:
-    """Bridge 後的雙通道 STT 觀察 —— 119 未提供 /observe，本函式為 no-op。
+    """Bridge 後的雙通道 STT 觀察：把真人接手後的對話餵給機器B 更新 case_summary。
 
-    110LLM 有 /observe，可在轉接真人後持續更新 case_summary + transcript。
-    119 NLP Server 沒有這個端點（實測 /openapi.json 僅 7 個路由），
-    再呼叫只會換來 404，故直接短路返回，不送 HTTP。
+    機器B 2026-08-28 已實作（見 docs/talk_toB/observe-endpoint-for-machineB.md）：
+      - 不看也不設 done，任何階段都能呼叫
+      - 不回 AI 語句（無 outputs），本端點只寫 transcript 就回（實測 <2ms）
+      - 摘要在 B 端背景重算（約 5 秒一次），更新後照常從 SSE 推 case_updated
 
-    若日後 132 補上 /observe，把下面的呼叫還原即可（git 歷史有原始版本）。
+    role: "caller"（民眾）或 "agent"（接手的真人受理員）。
+    回傳值目前呼叫端不使用，失敗只 log 不拋例外（不能影響通話）。
     """
-    return {}
+    if not sop_session_id:
+        return {}
+    try:
+        resp = requests.post(
+            f"{SOP_SERVER_URL}/session/{sop_session_id}/observe",
+            json={"text": text, "role": role}, timeout=HTTP_TIMEOUT,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        print(f"⚠️  119 NLP observe 失敗（{role}）：{e}", flush=True)
+        return {}
 
 
 def hangup(sop_session_id: str) -> None:
@@ -88,15 +102,26 @@ def get_result(sop_session_id: str) -> dict | None:
 
 
 # 119 的結束原因放在 case["result"]（error 欄位恆為 None，與 110 不同）：
-#   dispatched     救護車已派出，正常完成
-#   ohca_transfer  判斷為 OHCA，需轉接真人
-#   caller_hangup  報案人掛斷
-#   error          技術錯誤
+#   dispatched      救護車已派出，正常完成
+#   ohca_transfer   判斷為 OHCA，需轉接真人
+#   human_transfer  其他需轉接真人的情形（火警無法確認燃燒標的、報案人資訊問不出來…）
+#   caller_hangup   報案人掛斷
+#   manual_end      操作員主動結束流程
+#   error           技術錯誤
 def end_result(case: dict | None) -> str | None:
     """取 119 case 的結束原因（result 欄位）。"""
     return case.get("result") if case else None
 
 
+# B 端引擎會把所有轉真人情形收斂成這兩個值之一
+# （見 nlp_cyberon_server/ai/119_0813_adjustSOP/sop_119_engine.py:1005-1007）
+_TRANSFER_RESULTS = {"ohca_transfer", "human_transfer"}
+
+
 def is_transfer_to_human(case: dict | None) -> bool:
-    """是否需轉接真人（目前僅 OHCA 判定會轉接）。"""
-    return end_result(case) == "ohca_transfer"
+    """是否需轉接真人。
+
+    ⚠️ 這個判斷若漏掉任一值，該通電話會被當成「正常結束」直接掛斷——
+       民眾會聽到「立即為您轉接專人」然後電話就斷了。B 端新增結束原因時務必同步更新。
+    """
+    return end_result(case) in _TRANSFER_RESULTS
