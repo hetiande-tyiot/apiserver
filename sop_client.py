@@ -17,10 +17,25 @@ import requests
 from config import SOP_SERVER_URL, HTTP_TIMEOUT
 
 
-def new_session() -> tuple[str, list[str]]:
-    """建立 119 NLP session，回傳 (session_id, 開場白 outputs)。"""
+def new_session(call_uuid: str = "") -> tuple[str, list[str]]:
+    """建立 119 NLP session，回傳 (session_id, 開場白 outputs)。
+
+    call_uuid 是這通電話在我們這邊的通話編號，跟錄音檔名用的是同一組。
+    傳過去之後，NLP 那邊寫出來的案件 JSON，檔名尾碼就會用這組編號，
+    測試回饋表、錄音檔、案件 JSON 三邊才能靠檔名直接對上。
+
+    不傳的話，NLP 會退回用它自己產生的 session_id 當檔名尾碼，
+    那是兩組各自獨立的編號，對不起來——回饋表上填的通話編號
+    就查不出是哪一通的案件 JSON（2026-10-05 之前就是這個狀況）。
+
+    沒有 call_uuid 時不帶 request body，行為與過去完全相同。
+    """
     try:
-        resp = requests.post(f"{SOP_SERVER_URL}/session/new", timeout=HTTP_TIMEOUT)
+        resp = requests.post(
+            f"{SOP_SERVER_URL}/session/new",
+            json={"call_uuid": call_uuid} if call_uuid else None,
+            timeout=HTTP_TIMEOUT,
+        )
         resp.raise_for_status()
         data = resp.json()
         return data.get("session_id", ""), data.get("outputs", [])

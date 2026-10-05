@@ -135,7 +135,8 @@ def call_start(payload: CallStartPayload):
         return {"uuid": uuid, "outputs": [], "audio_path": "", "status": "transfer_started",
                 "sop_session_id": ""}
 
-    sop_id, greet_outputs = sop.new_session()
+    # 把通話編號一起傳給 NLP，案件 JSON 的檔名尾碼才會跟錄音檔同一組編號
+    sop_id, greet_outputs = sop.new_session(uuid)
     sop_sessions[uuid] = sop_id
     turn_counters[uuid] = 0
 
