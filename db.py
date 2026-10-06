@@ -5,6 +5,7 @@ db.py — MySQL (fire119) 連線與所有 INSERT/UPDATE 封裝。
   cases      — 一通電話一筆案件
   utterances — 逐句 STT 紀錄
   dialogue   — 一輪 AI 對話（stt_text + nlp_reply + audio_path）
+  analysis_log — 每次送給機器C 的 Analysis 完整 JSON（事後查每一輪畫面上的判斷結果）
 """
 import json
 from datetime import datetime
@@ -59,6 +60,23 @@ def insert_dialogue(uuid: str, turn: int, stt_text: str, nlp_reply: str, audio_p
         db.close()
     except Exception as e:
         print(f"⚠️  MySQL dialogue insert 失敗：{e}", flush=True)
+
+
+def insert_analysis_log(uuid: str, state: str, payload: dict,
+                        http_status: int | None, error: str | None) -> None:
+    """記下一次送給機器C 的 Analysis。寫入失敗只印警告，不影響送給機器C 的流程。"""
+    try:
+        db = get_db()
+        with db.cursor() as cur:
+            cur.execute(
+                """INSERT INTO analysis_log (uuid, state, payload, http_status, error, created_at)
+                   VALUES (%s, %s, %s, %s, %s, %s)""",
+                (uuid, state, json.dumps(payload, ensure_ascii=False),
+                 http_status, error, datetime.now()),
+            )
+        db.close()
+    except Exception as e:
+        print(f"⚠️  MySQL analysis_log insert 失敗：{e}", flush=True)
 
 
 def update_nlp(uuid: str, nlp_reply: str) -> None:

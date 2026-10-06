@@ -60,3 +60,16 @@ CREATE TABLE IF NOT EXISTS dialogue (
   created_at  DATETIME,
   INDEX idx_dlg_uuid (uuid)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 每次送給機器C 的 Analysis 內容（Initial / Updated / Final 各一筆）
+-- 用途：事後查某一通電話在通話過程中，受理員畫面上每一輪看到的案類與欄位
+CREATE TABLE IF NOT EXISTS analysis_log (
+  id           INT AUTO_INCREMENT PRIMARY KEY,
+  uuid         VARCHAR(64) NOT NULL,
+  state        VARCHAR(16),            -- Initial / Updated / Final
+  payload      JSON,                   -- 送給機器C 的完整 JSON，原樣保存
+  http_status  INT,                    -- 機器C 回的狀態碼；連線失敗等例外時為 NULL
+  error        TEXT,                   -- 送出發生例外時的錯誤訊息
+  created_at   DATETIME,
+  INDEX idx_alog_uuid (uuid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

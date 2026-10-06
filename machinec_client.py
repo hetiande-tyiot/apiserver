@@ -20,6 +20,7 @@ from datetime import datetime
 
 import requests
 
+import db
 from config import MACHINEC_URL, MACHINEC_TOKEN, MACHINEC_TIMEOUT
 from utils  import _ts
 
@@ -139,17 +140,25 @@ def analysis(call_id: str, case: dict, state: str) -> None:
         "analysisState": state,
         "caseDetails":   case_details_str,
     }
+    http_status = None
+    error = None
     try:
         resp = requests.post(_ANALYSIS_URL, json=payload, headers=_HEADERS, timeout=MACHINEC_TIMEOUT)
+        http_status = resp.status_code
         if resp.status_code in _OK_CODES:
             n_details = len(details_dict)
             print(f"✅ [MachineC] Analysis({state}) 送出（caseDetails: {n_details} 欄）{_ts()}", flush=True)
         else:
             # 失敗時 dump 出我們送的 payload，方便對照 MC 的錯誤訊息
+            error = resp.text
             print(f"⚠️ [MachineC] Analysis({state}) 回傳失敗（HTTP {resp.status_code}）：{resp.text} {_ts()}", flush=True)
             print(f"   送出的 caseDetails：{case_details_str}", flush=True)
     except Exception as e:
+        error = str(e)
         print(f"⚠️ [MachineC] Analysis({state}) 例外：{e} {_ts()}", flush=True)
+    # 送完才寫資料庫：不管成功、失敗或例外都留一筆，事後可查每一輪畫面上看到什麼。
+    # 寫入失敗只印警告，送給機器C 的結果不受影響。
+    db.insert_analysis_log(call_id, state, payload, http_status, error)
 
 
 def transfer_suggest(call_id: str, reason: str, case: dict | None = None) -> None:
