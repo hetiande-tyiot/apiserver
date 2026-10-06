@@ -7,11 +7,14 @@
 CREATE DATABASE IF NOT EXISTS fire119
   CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
--- 使用者（本機連線用；用 mysql_native_password 以相容 pymysql）
-CREATE USER IF NOT EXISTS 'api119'@'localhost'
-  IDENTIFIED WITH mysql_native_password BY 'api119pass';
-CREATE USER IF NOT EXISTS 'api119'@'127.0.0.1'
-  IDENTIFIED WITH mysql_native_password BY 'api119pass';
+-- 使用者（本機連線用）
+-- 本機是 MariaDB：MySQL 的 IDENTIFIED WITH ... BY 語法會報錯。
+-- MariaDB 的 IDENTIFIED BY 預設就是 mysql_native_password，pymysql 可直接連。
+-- ALTER USER 讓重跑時也會把既有帳號（例如被設成 auth_socket）改回密碼登入。
+CREATE USER IF NOT EXISTS 'api119'@'localhost' IDENTIFIED BY 'api119pass';
+CREATE USER IF NOT EXISTS 'api119'@'127.0.0.1' IDENTIFIED BY 'api119pass';
+ALTER USER 'api119'@'localhost' IDENTIFIED BY 'api119pass';
+ALTER USER 'api119'@'127.0.0.1' IDENTIFIED BY 'api119pass';
 GRANT ALL PRIVILEGES ON fire119.* TO 'api119'@'localhost';
 GRANT ALL PRIVILEGES ON fire119.* TO 'api119'@'127.0.0.1';
 FLUSH PRIVILEGES;
