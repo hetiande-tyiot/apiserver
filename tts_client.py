@@ -1,5 +1,8 @@
 """
-tts_client.py — Cyberon TTS (gRPC) 封裝。
+tts_client.py — TTS (gRPC，Cyberon 協定) 封裝。
+
+backend 由 config.TTS_BACKEND 選擇（cyberon / f5），各自的 host/port/speaker/
+speed/gain/token 在 config.TTS_BACKENDS 分開設定。
 
 流程：
   1. grpclib.async TTS → 取 16kHz WAV bytes
@@ -24,7 +27,11 @@ from grpclib.client import Channel
 import service_pb2 as pb
 import service_grpc as pb_grpc
 
-from config import TTS_HOST, TTS_PORT, TTS_SPEED, TTS_GAIN, TTS_TOKEN, TTS_AUDIO_DIR
+from config import TTS_BACKEND, TTS_BACKENDS, TTS_AUDIO_DIR
+
+if TTS_BACKEND not in TTS_BACKENDS:
+    raise ValueError(f"TTS_BACKEND={TTS_BACKEND!r} 不在 TTS_BACKENDS {list(TTS_BACKENDS)} 裡")
+_cfg = TTS_BACKENDS[TTS_BACKEND]
 
 
 # 同步介面用：在獨立執行緒跑 asyncio loop
@@ -40,20 +47,21 @@ def _make_tls_ctx() -> ssl.SSLContext:
 
 
 async def _tts_async(text: str) -> bytes:
-    """呼叫 Cyberon TTS，回傳 16kHz WAV bytes。"""
-    channel = Channel(TTS_HOST, TTS_PORT, ssl=_make_tls_ctx())
+    """呼叫目前選定的 TTS backend，回傳 16kHz WAV bytes。"""
+    channel = Channel(_cfg["host"], _cfg["port"], ssl=_make_tls_ctx())
     try:
         stub = pb_grpc.StreamServiceStub(channel)
-        print(f"🔧 TTS 送出：port={TTS_PORT} speed={TTS_SPEED} gain={TTS_GAIN}", flush=True)
+        print(f"🔧 TTS 送出：[{TTS_BACKEND}] {_cfg['host']}:{_cfg['port']} speaker={_cfg['speaker']} "
+              f"speed={_cfg['speed']} gain={_cfg['gain']}", flush=True)
         req = pb.TtsRequest(
             serviceName="e2e",
             text=text,
             outfmt="wav",
             language="zh-TW",
-            speaker="Yain2",
-            speed=TTS_SPEED,
-            gain=TTS_GAIN,
-            token=TTS_TOKEN,
+            speaker=_cfg["speaker"],
+            speed=_cfg["speed"],
+            gain=_cfg["gain"],
+            token=_cfg["token"],
         )
         chunks: list[bytes] = []
         async with stub.TTS.open() as stream:
@@ -86,5 +94,5 @@ def synthesize(text: str, uuid: str, turn: int) -> str:
         print(f"🔊 [{uuid[:8]}] TTS 完成：{len(pcm8k)} bytes，{elapsed:.2f}s → {path}", flush=True)
         return path
     except Exception as e:
-        print(f"⚠️  TTS 失敗 [{uuid[:8]}]：{e}", flush=True)
+        print(f"⚠️  TTS 失敗 [{uuid[:8]}]：{e!r}", flush=True)
         return ""

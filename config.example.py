@@ -41,26 +41,38 @@ MYSQL_DB = os.environ.get("MYSQL_DB",   "fire119")
 #   建表 SQL 見 schema_119.sql
 
 # ================================================================
-# TTS gRPC endpoint（機器B）
-# 兩個 backend 共用同一份 Cyberon 協定，client 不必動，只切 host:port
+# TTS gRPC（Cyberon 協定）
+# 兩種 backend 各自獨立：用 TTS_BACKEND 切換，各自的參數在 TTS_BACKENDS 裡分開設定。
+#   "cyberon" : 賽微 Cyberon TTS
+#   "f5"      : F5-TTS Adapter（機器B）
+# 每個參數都可用環境變數覆寫：TTS_BACKEND、TTS_CYBERON_HOST、TTS_F5_SPEED ...
 #
-#   Cyberon TTS (原本，停用中)   : port 8088
-#   F5-TTS Adapter (現用，臨時) : port 8089
-#
-# 切回 Cyberon：把 TTS_PORT 預設值改回 str(TTS_PORT_CYBERON)
-# ================================================================
-TTS_HOST = os.environ.get("TTS_HOST", "<TTS-IP>")   # ← 改我
-TTS_PORT_CYBERON = 8088   # 賽微，停用中
-TTS_PORT_F5 = 8089   #  F5-TTS
-TTS_PORT_CosyVoice3 = 8090   # CosyVoice3
-TTS_PORT = int(os.environ.get("TTS_PORT", str(TTS_PORT_F5)))  # ← 目前使用
-# 語速 / 音量：Cyberon 與 F5-TTS Adapter 共用同一組欄位（見 docs/shared_with_B/tts-speed-gain-for-machineA.md）
 # speed: 0.5(慢) ~ 2.0(快)，1.0=正常；F5 建議 0.8~1.3 最自然、超出區間 B 端 clamp
-TTS_SPEED = float(os.environ.get("TTS_SPEED", "1.0"))
 # gain : 0.5(小) ~ 4.0(大)，1.0=原音；F5 端會削波保護、建議 ≤ 2.0
-TTS_GAIN = float(os.environ.get("TTS_GAIN",  "0.8"))
 #   實測：speed 0.7→7.97s / 1.0→5.57s / 1.5→3.71s（同一句）；gain 2.0 → RMS 翻倍
-TTS_TOKEN = os.environ.get("TTS_TOKEN", "<向機器B 索取>")   # ← 改我
+#   （見 docs/shared_with_B/tts-speed-gain-for-machineA.md）
+# 其他已知 port：CosyVoice3 8090
+# ================================================================
+TTS_BACKEND = os.environ.get("TTS_BACKEND", "f5")   # ← 改我：cyberon / f5
+
+TTS_BACKENDS = {
+    "cyberon": {
+        "host":    os.environ.get("TTS_CYBERON_HOST", "<Cyberon-IP>"),   # ← 改我
+        "port":    int(os.environ.get("TTS_CYBERON_PORT", "8088")),
+        "speaker": os.environ.get("TTS_CYBERON_SPEAKER", "<可用語者，例如 Sharon>"),   # ← 改我
+        "speed":   float(os.environ.get("TTS_CYBERON_SPEED", "1.0")),
+        "gain":    float(os.environ.get("TTS_CYBERON_GAIN", "0.8")),
+        "token":   os.environ.get("TTS_CYBERON_TOKEN", "<Cyberon token>"),   # ← 改我
+    },
+    "f5": {
+        "host":    os.environ.get("TTS_F5_HOST", "<機器B-IP>"),   # ← 改我
+        "port":    int(os.environ.get("TTS_F5_PORT", "8089")),
+        "speaker": os.environ.get("TTS_F5_SPEAKER", "Yain2"),
+        "speed":   float(os.environ.get("TTS_F5_SPEED", "1.0")),
+        "gain":    float(os.environ.get("TTS_F5_GAIN", "0.8")),
+        "token":   os.environ.get("TTS_F5_TOKEN", "<向機器B 索取>"),   # ← 改我
+    },
+}
 TTS_AUDIO_DIR = os.environ.get("TTS_AUDIO_DIR", os.path.expanduser("~/tts_audio"))
 os.makedirs(TTS_AUDIO_DIR, exist_ok=True)
 
