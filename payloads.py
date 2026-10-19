@@ -10,6 +10,8 @@ class CallStartPayload(BaseModel):
     uuid: str
     channel: str
     transfer_mode: bool = False   # True = 轉接模式，不建立 NLP session
+    dialed_number: str = ""       # 撥打的號碼（911 正式、912 SOP 調整測試環境），決定送哪一台 119 服務
+    caller_number: str = ""       # 來電號碼（分機或外線號碼）
 
 
 class SttPayload(BaseModel):

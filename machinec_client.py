@@ -90,6 +90,25 @@ def fetch_labels(sop_server_url: str, timeout: int = 5) -> int:
         return 0
 
 
+def fetch_extra_labels(sop_server_url: str, timeout: int = 5) -> int:
+    """再從另一台 119 服務（912 SOP 調整測試環境）抓 label，只補進目前沒有的欄位。
+
+    測試環境新增的欄位才有中文名稱可以顯示；已經有的欄位一律保留正式環境的名稱，
+    所以測試環境若只改既有欄位的中文名稱，前端看不到這個變更。
+    失敗時只 log，不影響正式環境已載入的對照表。回傳補進的條數。"""
+    url = f"{sop_server_url}/schema/case-fields/labels"
+    try:
+        resp = requests.get(url, timeout=timeout)
+        resp.raise_for_status()
+        added = {k: v for k, v in (resp.json() or {}).items() if k not in _LABEL_MAP}
+        _LABEL_MAP.update(added)
+        print(f"📚 [MachineC] 測試環境補進 case 欄位 label：{len(added)} 條 {_ts()}", flush=True)
+        return len(added)
+    except Exception as e:
+        print(f"⚠️ [MachineC] 載入測試環境 label 失敗（不影響正式環境）：{e} {_ts()}", flush=True)
+        return 0
+
+
 def _stringify(v) -> str:
     """把 case 欄位值轉成字串給 MC（MC 規格要求 caseDetails 內全部值都是字串）。"""
     if isinstance(v, bool):

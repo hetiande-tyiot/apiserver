@@ -17,6 +17,11 @@ import os
 # ================================================================
 SOP_SERVER_URL = os.environ.get("SOP_SERVER_URL", "http://<機器B-IP>:8200")   # ← 改我
 
+# 機器B 的 SOP 調整測試環境（同一台機器另一張顯卡，port 8300）。
+# 撥打的號碼在 SOP_TEST_DIALED_NUMBERS 裡的通話（目前是 912）送到這裡，其他照舊送 SOP_SERVER_URL。
+SOP_TEST_SERVER_URL = os.environ.get("SOP_TEST_SERVER_URL", "http://<機器B-IP>:8300")
+SOP_TEST_DIALED_NUMBERS = {"912"}
+
 # ================================================================
 # amidaemon 內部控制端點（介入轉接 + 通話結束指令）
 # 日後 api 與 ami 機器拆分時，把 host 改成內網 IP

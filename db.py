@@ -22,13 +22,16 @@ def get_db():
     )
 
 
-def insert_case(uuid: str, channel: str) -> None:
+def insert_case(uuid: str, channel: str, dialed_number: str = "", caller_number: str = "") -> None:
+    """建一筆案件。dialed_number 是撥打的號碼（912 = SOP 調整測試環境），
+    查測試資料用 WHERE dialed_number='912'；空字串存成 NULL（舊流程沒帶號碼的通話）。"""
     try:
         db = get_db()
         with db.cursor() as cur:
             cur.execute(
-                "INSERT IGNORE INTO cases (uuid, channel, created_at) VALUES (%s, %s, %s)",
-                (uuid, channel, datetime.now()),
+                """INSERT IGNORE INTO cases (uuid, channel, dialed_number, caller_number, created_at)
+                   VALUES (%s, %s, %s, %s, %s)""",
+                (uuid, channel, dialed_number or None, caller_number or None, datetime.now()),
             )
         db.close()
     except Exception as e:

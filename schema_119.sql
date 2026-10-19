@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS cases (
   id             INT AUTO_INCREMENT PRIMARY KEY,
   uuid           VARCHAR(64)  NOT NULL UNIQUE,
   channel        VARCHAR(64),
+  dialed_number  VARCHAR(32),           -- 撥打的號碼：911 正式 / 912 SOP 調整測試環境
+  caller_number  VARCHAR(32),           -- 來電號碼（分機或外線號碼）
   main_category  VARCHAR(32),           -- 火警 / 救護
   sub_category   VARCHAR(32),           -- 急病 等子類
   address        VARCHAR(255),

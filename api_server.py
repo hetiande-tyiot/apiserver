@@ -28,7 +28,7 @@ import sop_client as sop
 import tts_client as tts
 import machinec_client as machinec
 import sse_consumer
-from config    import AMIDAEMON_URL, SOP_SERVER_URL
+from config    import AMIDAEMON_URL, SOP_SERVER_URL, SOP_TEST_SERVER_URL, SOP_TEST_DIALED_NUMBERS
 from payloads  import CallStartPayload, SttPayload, CallEndPayload, TransferPayload, PrecheckPayload
 from state     import sop_sessions, turn_counters, mc_state, MCSessionState
 
@@ -38,8 +38,10 @@ app = FastAPI(title="110 API Server", version="1.1")
 
 @app.on_event("startup")
 def _on_startup() -> None:
-    """啟動時 fetch 機器B 的 case 欄位中文 label 對照表（給 caseDetails 用）。"""
+    """啟動時 fetch 機器B 的 case 欄位中文 label 對照表（給 caseDetails 用）。
+    再從 912 測試環境補進它新增的欄位，測試通話的新欄位在前端才會顯示中文名稱。"""
     machinec.fetch_labels(SOP_SERVER_URL)
+    machinec.fetch_extra_labels(SOP_TEST_SERVER_URL)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -125,7 +127,7 @@ def call_precheck(payload: PrecheckPayload):
 @app.post("/call/start")
 def call_start(payload: CallStartPayload):
     uuid = payload.uuid
-    db.insert_case(uuid, payload.channel)
+    db.insert_case(uuid, payload.channel, payload.dialed_number, payload.caller_number)
 
     if payload.transfer_mode:
         # 轉接模式：只建 cases 紀錄，不啟動 NLP session、不啟動 SSE
@@ -136,7 +138,12 @@ def call_start(payload: CallStartPayload):
                 "sop_session_id": ""}
 
     # 把通話編號一起傳給 NLP，案件 JSON 的檔名尾碼才會跟錄音檔同一組編號
-    sop_id, greet_outputs = sop.new_session(uuid)
+    # 撥打 912 的是 SOP 調整測試環境的通話，送測試用的 119 服務；其他照舊送正式環境
+    is_test = payload.dialed_number in SOP_TEST_DIALED_NUMBERS
+    server_url = SOP_TEST_SERVER_URL if is_test else SOP_SERVER_URL
+    if is_test:
+        print(f"🧪 [{uuid[:8]}] 撥打 {payload.dialed_number} → 測試環境 {server_url}", flush=True)
+    sop_id, greet_outputs = sop.new_session(uuid, server_url)
     sop_sessions[uuid] = sop_id
     turn_counters[uuid] = 0
 
@@ -268,6 +275,8 @@ def call_end(payload: CallEndPayload):
     sop.hangup(sop_id)
 
     case = sop.get_result(sop_id)
+    # hangup 和取最後結果都要打這通電話所在的那一台，所以兩件事做完才清掉網址記錄
+    sop.forget(sop_id)
     if case:
         db.save_case(uuid, case)
 

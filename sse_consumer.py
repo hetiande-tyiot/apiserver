@@ -2,7 +2,7 @@
 sse_consumer.py — 訂閱機器B 的 case 變化 SSE 串流，把更新即時推給機器C。
 （2026-06-XX 從 ai/ami/ 搬到 apiserver/，由 api_server 集中管理）
 
-對應機器B 端點（host 跟著 config.SOP_SERVER_URL，各機器不同）：
+對應機器B 端點（host 是開這個 session 的那一台 119 服務：正式 SOP_SERVER_URL 或 912 測試環境 SOP_TEST_SERVER_URL）：
   GET {SOP_SERVER_URL}/session/{sop_session_id}/case/stream
 
 事件類型：
@@ -18,7 +18,8 @@ from typing import Generator
 
 import requests
 
-from config import SOP_SERVER_URL, AMIDAEMON_URL
+from config import AMIDAEMON_URL
+from sop_client import base_url as sop_base_url
 from state  import mc_state, MCSessionState
 from utils  import _ts
 import machinec_client as machinec
@@ -131,7 +132,7 @@ def notify_amidaemon_end(call_uuid: str) -> None:
 def _listen_loop(call_uuid: str, sop_session_id: str,
                  stop_event: threading.Event) -> None:
     """背景 thread 主迴圈。連線到 done 事件或外部 stop signal 為止。"""
-    url = f"{SOP_SERVER_URL}/session/{sop_session_id}/case/stream"
+    url = f"{sop_base_url(sop_session_id)}/session/{sop_session_id}/case/stream"
     print(f"🔌 [{call_uuid[:8]}] SSE 連線：{url} {_ts()}", flush=True)
     try:
         with requests.get(url, stream=True, timeout=None,

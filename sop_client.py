@@ -16,8 +16,23 @@ import requests
 
 from config import SOP_SERVER_URL, HTTP_TIMEOUT
 
+# session_id → 開這個 session 的 119 服務網址。
+# 912 的測試通話開在測試環境（SOP_TEST_SERVER_URL），之後 input / observe / hangup / result
+# 和 SSE 都要打同一台；沒記錄的 session 一律當正式環境。
+_session_base: dict[str, str] = {}
 
-def new_session(call_uuid: str = "") -> tuple[str, list[str]]:
+
+def base_url(sop_session_id: str) -> str:
+    """這個 session 所在的 119 服務網址（沒記錄就是正式環境 SOP_SERVER_URL）。"""
+    return _session_base.get(sop_session_id, SOP_SERVER_URL)
+
+
+def forget(sop_session_id: str) -> None:
+    """通話完全收尾後清掉網址記錄。要在 hangup 和取最後結果之後才呼叫。"""
+    _session_base.pop(sop_session_id, None)
+
+
+def new_session(call_uuid: str = "", server_url: str = SOP_SERVER_URL) -> tuple[str, list[str]]:
     """建立 119 NLP session，回傳 (session_id, 開場白 outputs)。
 
     call_uuid 是這通電話在我們這邊的通話編號，跟錄音檔名用的是同一組。
@@ -29,16 +44,22 @@ def new_session(call_uuid: str = "") -> tuple[str, list[str]]:
     就查不出是哪一通的案件 JSON（2026-10-05 之前就是這個狀況）。
 
     沒有 call_uuid 時不帶 request body，行為與過去完全相同。
+
+    server_url 是要開在哪一台 119 服務（預設正式環境）；開成功後記下來，
+    之後這個 session 的其他呼叫都會打同一台。
     """
     try:
         resp = requests.post(
-            f"{SOP_SERVER_URL}/session/new",
+            f"{server_url}/session/new",
             json={"call_uuid": call_uuid} if call_uuid else None,
             timeout=HTTP_TIMEOUT,
         )
         resp.raise_for_status()
         data = resp.json()
-        return data.get("session_id", ""), data.get("outputs", [])
+        sid = data.get("session_id", "")
+        if sid:
+            _session_base[sid] = server_url
+        return sid, data.get("outputs", [])
     except Exception as e:
         print(f"⚠️  119 NLP new session 失敗：{e}", flush=True)
         return "", []
@@ -53,7 +74,7 @@ def push(sop_session_id: str, text: str) -> tuple[list[str], bool, str | None]:
         return [], False, None
     try:
         resp = requests.post(
-            f"{SOP_SERVER_URL}/session/{sop_session_id}/input",
+            f"{base_url(sop_session_id)}/session/{sop_session_id}/input",
             json={"text": text}, timeout=HTTP_TIMEOUT,
         )
         resp.raise_for_status()
@@ -79,7 +100,7 @@ def observe(sop_session_id: str, text: str, role: str) -> dict:
         return {}
     try:
         resp = requests.post(
-            f"{SOP_SERVER_URL}/session/{sop_session_id}/observe",
+            f"{base_url(sop_session_id)}/session/{sop_session_id}/observe",
             json={"text": text, "role": role}, timeout=HTTP_TIMEOUT,
         )
         resp.raise_for_status()
@@ -93,7 +114,7 @@ def hangup(sop_session_id: str) -> None:
     if not sop_session_id:
         return
     try:
-        requests.post(f"{SOP_SERVER_URL}/session/{sop_session_id}/hangup", timeout=HTTP_TIMEOUT)
+        requests.post(f"{base_url(sop_session_id)}/session/{sop_session_id}/hangup", timeout=HTTP_TIMEOUT)
     except Exception:
         pass
 
@@ -107,7 +128,7 @@ def get_result(sop_session_id: str) -> dict | None:
         return None
     try:
         resp = requests.get(
-            f"{SOP_SERVER_URL}/session/{sop_session_id}/result", timeout=HTTP_TIMEOUT
+            f"{base_url(sop_session_id)}/session/{sop_session_id}/result", timeout=HTTP_TIMEOUT
         )
         resp.raise_for_status()
         return resp.json().get("case")
